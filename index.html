@@ -975,6 +975,58 @@ function renderSolvedSvg(q){
       path.setAttribute('d', d);
     }
 
+    function getLiveBarMetrics(q){
+      const barLeft = dropBar.offsetLeft;
+      const barTop = dropBar.offsetTop;
+      const barBottom = barTop + dropBar.offsetHeight;
+
+      const units = Array.from(dropBar.querySelectorAll('.model-unit'));
+      const firstUnit = units[0];
+      const fallbackUnitWidth = 54;
+
+      const unitWidth = firstUnit ? firstUnit.offsetWidth : fallbackUnitWidth;
+      const totalUnits = Math.max(units.length || q.groups || 1, 1);
+      const firstUnitLeft = firstUnit ? firstUnit.offsetLeft : 0;
+
+      const actualLeft = barLeft + firstUnitLeft;
+      const actualWidth = unitWidth * totalUnits;
+
+      return { barTop, barBottom, actualLeft, actualWidth, unitWidth, totalUnits };
+    }
+
+    function placeExpandableBrace(braceEl, {
+      startUnit = 0,
+      spanUnits = 1,
+      isTop = true,
+      inset = 5
+    } = {}){
+      const q = currentQuestion();
+      if(!q) return null;
+
+      const { barTop, barBottom, actualLeft, unitWidth } = getLiveBarMetrics(q);
+
+      const left = actualLeft + (startUnit * unitWidth) + inset;
+      const width = Math.max((unitWidth * spanUnits) - (inset * 2), 24);
+
+      braceEl.style.left = `${left}px`;
+      braceEl.style.width = `${width}px`;
+      braceEl.style.bottom = 'auto';
+
+      const braceHeight = Math.max(braceEl.offsetHeight || 24, 24);
+      braceEl.style.top = isTop ? `${barTop - braceHeight + 2}px` : `${barBottom - 2}px`;
+
+      updateBraceSvg(braceEl, isTop);
+
+      return {
+        left,
+        width,
+        center: left + (width / 2),
+        braceHeight,
+        barTop,
+        barBottom
+      };
+    }
+
     function positionType1Braces(){
       const q = currentQuestion();
       if(!usesDragLabels(q)) return;
@@ -1039,67 +1091,34 @@ function renderSolvedSvg(q){
       unitTargetRight.style.top = '';
       unitTargetRight.style.bottom = '';
 
-      // Use unscaled layout measurements inside the same container so the
-      // brackets stay attached to the green box consistently on any screen.
-      const barLeft = dropBar.offsetLeft;
-      const barTop = dropBar.offsetTop;
-      const barBottom = barTop + dropBar.offsetHeight;
-
-      const units = Array.from(dropBar.querySelectorAll('.model-unit'));
-      const firstUnit = units[0];
-      const lastUnit = units[units.length - 1];
-
-      const fallbackUnitWidth = 54;
-      const firstUnitLeft = firstUnit ? firstUnit.offsetLeft : 0;
-      const lastUnitRight = lastUnit
-        ? (lastUnit.offsetLeft + lastUnit.offsetWidth)
-        : (firstUnitLeft + fallbackUnitWidth * Math.max(q.groups || 1, 1));
-
-      const actualLeft = barLeft + firstUnitLeft;
-      const actualRight = barLeft + lastUnitRight;
-      const actualWidth = Math.max(actualRight - actualLeft, 44);
-      const unitWidth = firstUnit ? firstUnit.offsetWidth : fallbackUnitWidth;
-
-      const unitCenter = actualLeft + (unitWidth / 2);
-      const totalCenter = actualLeft + (actualWidth / 2);
-
       const totalTargetWidth = totalTarget.offsetWidth || 56;
       const totalTargetHeight = totalTarget.offsetHeight || 28;
       const unitTargetWidth = unitTarget.offsetWidth || 56;
       const unitTargetHeight = unitTarget.offsetHeight || 28;
 
-      const braceInset = 5;
-      const topBraceWidth = Math.max(actualWidth - (braceInset * 2), 24);
-      const bottomBraceWidth = Math.max(unitWidth - (braceInset * 2), 24);
+      const totalUnits = Math.max(modelUnits || q.groups || 1, 1);
 
-      braceTotal.style.left = `${actualLeft + braceInset}px`;
-      braceTotal.style.width = `${topBraceWidth}px`;
+      // top bracket = whole bar
+      const topBraceBox = placeExpandableBrace(braceTotal, {
+        startUnit: 0,
+        spanUnits: totalUnits,
+        isTop: true
+      });
 
-      braceUnit.style.left = `${actualLeft + braceInset}px`;
-      braceUnit.style.width = `${bottomBraceWidth}px`;
+      // bottom bracket = 1 unit by default
+      const bottomBraceBox = placeExpandableBrace(braceUnit, {
+        startUnit: 0,
+        spanUnits: 1,
+        isTop: false
+      });
 
-      // Make brackets touch the big green box.
-      const topBraceHeight = Math.max(braceTotal.offsetHeight || 24, 24);
-      const bottomBraceHeight = Math.max(braceUnit.offsetHeight || 24, 24);
-
-      // top brace bottom edge sits on the box top edge
-      braceTotal.style.top = `${barTop - topBraceHeight + 2}px`;
-
-      // bottom brace top edge sits on the box bottom edge
-      braceUnit.style.top = `${barBottom - 2}px`;
-      braceUnit.style.bottom = 'auto';
-
-      // Place blanks relative to the attached brackets, not floating away.
-      totalTarget.style.left = `${totalCenter - (totalTargetWidth / 2)}px`;
-      totalTarget.style.top = `${barTop - topBraceHeight - totalTargetHeight - 6}px`;
+      totalTarget.style.left = `${topBraceBox.center - (totalTargetWidth / 2)}px`;
+      totalTarget.style.top = `${topBraceBox.barTop - topBraceBox.braceHeight - totalTargetHeight - 6}px`;
       totalTarget.style.transform = 'none';
 
-      unitTarget.style.left = `${unitCenter - (unitTargetWidth / 2)}px`;
-      unitTarget.style.top = `${barBottom + bottomBraceHeight + 6}px`;
+      unitTarget.style.left = `${bottomBraceBox.center - (unitTargetWidth / 2)}px`;
+      unitTarget.style.top = `${bottomBraceBox.barBottom + bottomBraceBox.braceHeight + 6}px`;
       unitTarget.style.bottom = 'auto';
-
-      updateBraceSvg(braceTotal, true);
-      updateBraceSvg(braceUnit, false);
     }
 
     function renderType1Targets(){
@@ -1156,18 +1175,24 @@ function renderSolvedSvg(q){
       totalTarget.classList.add('show');
       unitTarget.classList.add('show');
       if(q.type === 3) unitTargetRight.classList.add('show');
-      braceTotal.classList.add('show');
-      braceUnit.classList.add('show');
+
+      if(q.type !== 3 && modelUnits > 0){
+        braceTotal.classList.add('show');
+        braceUnit.classList.add('show');
+      }
+
       requestAnimationFrame(positionType1Braces);
       if(type1Labels.total){
         totalTarget.innerHTML = `<span class="placed-tag">${config.topText}</span>`;
         totalTarget.classList.add('filled');
+        if(q.type !== 3) braceTotal.classList.add('show');
       } else {
         totalTarget.innerHTML = '&nbsp;';
       }
       if(type1Labels.unit){
         unitTarget.innerHTML = `<span class="placed-tag">${config.bottomText}</span>`;
         unitTarget.classList.add('filled');
+        if(q.type !== 3) braceUnit.classList.add('show');
       } else {
         unitTarget.innerHTML = '&nbsp;';
       }
@@ -1434,6 +1459,7 @@ function renderSolvedSvg(q){
       if(modelUnits >= maxUnits) return;
       modelUnits += 1;
       renderModel();
+      renderType1Targets();
       resetMarkers();
       setFeedback('Nice. Keep building the bar model.', 'neutral');
     }
@@ -1550,6 +1576,7 @@ function renderSolvedSvg(q){
       if(unit){
         modelUnits = Math.max(0, modelUnits - 1);
         renderModel();
+        renderType1Targets();
         resetMarkers();
         setFeedback('One unit removed. Keep adjusting your bar model.', 'neutral');
         return;
